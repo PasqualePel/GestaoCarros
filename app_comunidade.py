@@ -145,9 +145,10 @@ with st.container():
         carro = st.selectbox("Qual carro?", LISTA_CARROS)
     
     with col2:
-        d_inicio = st.date_input("Data de Início", datetime.today())
+        # Abbiamo aggiunto format="DD/MM/YYYY" per avere giorno/mese/anno
+        d_inicio = st.date_input("Data de Início", datetime.today(), format="DD/MM/YYYY")
         t_inicio = st.time_input("Hora de Início", time(8, 0))
-        d_fim = st.date_input("Data de Término", datetime.today())
+        d_fim = st.date_input("Data de Término", datetime.today(), format="DD/MM/YYYY")
         t_fim = st.time_input("Hora de Término", time(12, 0))
 
     dt_inicio = datetime.combine(d_inicio, t_inicio)
@@ -181,6 +182,7 @@ st.subheader("📅 Reservas Futuras")
 if not df_prenotazioni.empty:
     df_visual = df_prenotazioni.sort_values(by="Inicio", ascending=True)
     try:
+        # Formattazione colonna tabella
         df_visual['Inicio'] = df_visual['Inicio'].dt.strftime('%d/%m/%Y %H:%M')
         df_visual['Fim'] = df_visual['Fim'].dt.strftime('%d/%m/%Y %H:%M')
     except:

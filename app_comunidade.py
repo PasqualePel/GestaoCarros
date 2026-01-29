@@ -23,10 +23,10 @@ LISTA_MISSIONARIOS = [
 def get_google_sheet():
     """Si collega a Google Sheets usando il segreto salvato su Streamlit"""
     # Definiamo i permessi necessari
-   scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     
     # Leggiamo la chiave JSON dai segreti di Streamlit
     json_creds = json.loads(st.secrets["gcp_json"])
@@ -147,4 +147,5 @@ if not df_prenotazioni.empty:
     st.dataframe(df_visual, use_container_width=True)
 else:
     st.info("Nenhuma reserva encontrada.")
+
 

@@ -1,17 +1,16 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, time
+import gspread
+from google.oauth2.service_account import Credentials
+import json
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Gestão de Carros", layout="centered")
 
-# --- DATI (LISTE) ---
+# --- COSTANTI ---
 LISTA_CARROS = [
-    "Rav 4",
-    "Nissan Novo",
-    "Nissan Velho",
-    "Carrinha",
-    "Nissan Vermelho"
+    "Rav 4", "Nissan Novo", "Nissan Velho", "Carrinha", "Nissan Vermelho"
 ]
 
 LISTA_MISSIONARIOS = [
@@ -20,53 +19,85 @@ LISTA_MISSIONARIOS = [
     "Annamaria", "Felicia", "Diana", "Concy", "Marilda"
 ]
 
-FILE_DATI = "prenotazioni.csv"
+# --- CONNESSIONE A GOOGLE SHEETS ---
+def get_google_sheet():
+    """Si collega a Google Sheets usando il segreto salvato su Streamlit"""
+    # Definiamo i permessi necessari
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    
+    # Leggiamo la chiave JSON dai segreti di Streamlit
+    json_creds = json.loads(st.secrets["gcp_json"])
+    
+    # Creiamo le credenziali
+    creds = Credentials.from_service_account_info(json_creds, scopes=scopes)
+    client = gspread.authorize(creds)
+    
+    # Apriamo il foglio (assicurati che il nome sia ESATTO)
+    sheet = client.open("Prenotazioni_Auto").sheet1
+    return sheet
 
-# --- FUNZIONI DI SUPPORTO ---
+# --- FUNZIONI DI GESTIONE DATI ---
 
-def carica_dati():
-    """Carica le prenotazioni dal file CSV se esiste, altrimenti crea un DataFrame vuoto."""
+def carica_dati(sheet):
+    """Scarica i dati dal foglio Google e li trasforma in tabella Pandas"""
+    dati = sheet.get_all_records()
+    
+    if not dati:
+        # Se il foglio è vuoto, ritorna dataframe vuoto
+        return pd.DataFrame(columns=["Carro", "Missionario", "Inicio", "Fim"])
+        
+    df = pd.DataFrame(dati)
+    
+    # Convertiamo le stringhe in date vere per i calcoli
+    # Gestiamo eventuali errori di formato se qualcuno tocca il foglio a mano
     try:
-        df = pd.read_csv(FILE_DATI)
-        # Convertiamo le colonne di testo in veri oggetti data/ora
         df['Inicio'] = pd.to_datetime(df['Inicio'])
         df['Fim'] = pd.to_datetime(df['Fim'])
-        return df
-    except FileNotFoundError:
-        return pd.DataFrame(columns=["Carro", "Missionario", "Inicio", "Fim"])
+    except Exception as e:
+        st.error(f"Errore nella lettura delle date dal foglio: {e}")
+        
+    return df
 
-def salva_dati(df):
-    """Salva il DataFrame nel file CSV."""
-    df.to_csv(FILE_DATI, index=False)
+def salva_prenotazione(sheet, carro, missionario, inizio, fine):
+    """Aggiunge una riga al foglio Google"""
+    # Convertiamo le date in testo (stringa) per Google Sheets
+    inizio_str = inizio.strftime("%Y-%m-%d %H:%M:%S")
+    fine_str = fine.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Aggiungiamo la riga
+    sheet.append_row([carro, missionario, inizio_str, fine_str])
 
 def controlla_conflitti(df, carro, inizio_nuovo, fine_nuovo):
-    """
-    Controlla se l'auto è già occupata in quel lasso di tempo.
-    Ritorna True se c'è un conflitto, False se è libera.
-    """
-    # Filtriamo solo le prenotazioni di QUELLA auto
+    """Controlla se l'auto è già occupata"""
+    if df.empty:
+        return False, None
+        
     prenotazioni_auto = df[df['Carro'] == carro]
     
     for index, row in prenotazioni_auto.iterrows():
         inicio_esistente = row['Inicio']
         fim_esistente = row['Fim']
         
-        # Logica di sovrapposizione:
-        # (Nuovo Inizio < Fine Esistente) E (Nuovo Fine > Inizio Esistente)
+        # Logica sovrapposizione
         if inizio_nuovo < fim_esistente and fine_nuovo > inicio_esistente:
-            return True, row['Missionario'] # Ritorna chi ha prenotato
+            return True, row['Missionario']
             
     return False, None
 
-# --- INTERFACCIA UTENTE (PORTOGHESE) ---
+# --- INTERFACCIA UTENTE ---
 
 st.title("🚗 Gestão de Carros da Comunidade")
-st.write("Bem-vindo. Utilize este sistema para reservar um carro.")
 
-# Carichiamo i dati esistenti
-df_prenotazioni = carica_dati()
+# Tentativo di connessione
+try:
+    sheet = get_google_sheet()
+    df_prenotazioni = carica_dati(sheet)
+    connessione_ok = True
+except Exception as e:
+    st.error(f"Errore di connessione a Google Sheets: {e}")
+    st.stop() # Ferma l'app se non si collega
 
-# --- SEZIONE PRENOTAZIONE (SIDEBAR O SOPRA) ---
+# --- FORM PRENOTAZIONE ---
 with st.container():
     st.subheader("Nova Reserva")
     
@@ -76,54 +107,40 @@ with st.container():
         carro = st.selectbox("Qual carro?", LISTA_CARROS)
     
     with col2:
-        # Data e Ora Inizio
         d_inicio = st.date_input("Data de Início", datetime.today())
-        t_inicio = st.time_input("Hora de Início", time(8, 0)) # Default 08:00
-        
-        # Data e Ora Fine
+        t_inicio = st.time_input("Hora de Início", time(8, 0))
         d_fim = st.date_input("Data de Término", datetime.today())
-        t_fim = st.time_input("Hora de Término", time(12, 0)) # Default 12:00
+        t_fim = st.time_input("Hora de Término", time(12, 0))
 
-    # Combiniamo data e ora in un unico oggetto per il controllo
     dt_inicio = datetime.combine(d_inicio, t_inicio)
     dt_fim = datetime.combine(d_fim, t_fim)
 
     if st.button("Reservar Carro"):
-        # 1. Validazione base
         if dt_inicio >= dt_fim:
             st.error("Erro: A data/hora de término deve ser posterior ao início.")
         else:
-            # 2. Controllo Conflitti
             conflitto, nome_occupante = controlla_conflitti(df_prenotazioni, carro, dt_inicio, dt_fim)
             
             if conflitto:
-                st.error(f"⚠️ O carro {carro} já está reservado nesse horário por: {nome_occupante}!")
+                st.error(f"⚠️ O carro {carro} já está reservado por: {nome_occupante}!")
             else:
-                # 3. Salvataggio
-                nuova_riga = {
-                    "Carro": carro,
-                    "Missionario": missionario,
-                    "Inicio": dt_inicio,
-                    "Fim": dt_fim
-                }
-                # Aggiungiamo la nuova riga usando concat (metodo moderno di pandas)
-                df_prenotazioni = pd.concat([df_prenotazioni, pd.DataFrame([nuova_riga])], ignore_index=True)
-                salva_dati(df_prenotazioni)
-                st.success(f"Sucesso! {carro} reservado para {missionario}.")
-                st.rerun() # Ricarica la pagina per mostrare la nuova lista
+                with st.spinner('Salvando no Google Sheets...'):
+                    salva_prenotazione(sheet, carro, missionario, dt_inicio, dt_fim)
+                    st.success(f"Sucesso! {carro} reservado para {missionario}.")
+                    st.balloons()
+                    import time as t
+                    t.sleep(2)
+                    st.rerun()
 
-# --- VISUALIZZAZIONE LISTA PRENOTAZIONI ---
+# --- TABELLA ---
 st.divider()
-st.subheader("📅 Reservas Atuais")
+st.subheader("📅 Reservas Atuais (Google Sheets)")
 
 if not df_prenotazioni.empty:
-    # Ordiniamo per data di inizio
     df_visual = df_prenotazioni.sort_values(by="Inicio", ascending=False)
-    
-    # Formattiamo le date per renderle più leggibili in tabella
+    # Formattazione per la visualizzazione
     df_visual['Inicio'] = df_visual['Inicio'].dt.strftime('%d/%m/%Y %H:%M')
     df_visual['Fim'] = df_visual['Fim'].dt.strftime('%d/%m/%Y %H:%M')
-    
     st.dataframe(df_visual, use_container_width=True)
 else:
     st.info("Nenhuma reserva encontrada.")

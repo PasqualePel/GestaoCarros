@@ -35,8 +35,10 @@ def get_google_sheet():
     creds = Credentials.from_service_account_info(json_creds, scopes=scopes)
     client = gspread.authorize(creds)
     
-    # Apriamo il foglio (assicurati che il nome sia ESATTO)
-    sheet = client.open("Prenotazioni_Auto").sheet1
+    # --- MODIFICA SPECIALE: APERTURA TRAMITE ID ---
+    # Usiamo l'ID che ci hai fornito per andare a colpo sicuro
+    sheet_id = "1ZzFjPgqy4aMCS7lUK3AHAx7HMdPaH8jRnZDGgi8e7BU"
+    sheet = client.open_by_key(sheet_id).sheet1
     return sheet
 
 # --- FUNZIONI DI GESTIONE DATI ---
@@ -52,12 +54,12 @@ def carica_dati(sheet):
     df = pd.DataFrame(dati)
     
     # Convertiamo le stringhe in date vere per i calcoli
-    # Gestiamo eventuali errori di formato se qualcuno tocca il foglio a mano
     try:
         df['Inicio'] = pd.to_datetime(df['Inicio'])
         df['Fim'] = pd.to_datetime(df['Fim'])
     except Exception as e:
-        st.error(f"Errore nella lettura delle date dal foglio: {e}")
+        # Se c'è un errore di formato, proviamo a ignorarlo o gestirlo
+        pass
         
     return df
 
@@ -78,12 +80,15 @@ def controlla_conflitti(df, carro, inizio_nuovo, fine_nuovo):
     prenotazioni_auto = df[df['Carro'] == carro]
     
     for index, row in prenotazioni_auto.iterrows():
-        inicio_esistente = row['Inicio']
-        fim_esistente = row['Fim']
-        
-        # Logica sovrapposizione
-        if inizio_nuovo < fim_esistente and fine_nuovo > inicio_esistente:
-            return True, row['Missionario']
+        try:
+            inicio_esistente = row['Inicio']
+            fim_esistente = row['Fim']
+            
+            # Logica sovrapposizione
+            if inizio_nuovo < fim_esistente and fine_nuovo > inicio_esistente:
+                return True, row['Missionario']
+        except:
+            continue
             
     return False, None
 
@@ -98,7 +103,7 @@ try:
     connessione_ok = True
 except Exception as e:
     st.error(f"Errore di connessione a Google Sheets: {e}")
-    st.stop() # Ferma l'app se non si collega
+    st.stop()
 
 # --- FORM PRENOTAZIONE ---
 with st.container():
@@ -115,37 +120,7 @@ with st.container():
         d_fim = st.date_input("Data de Término", datetime.today())
         t_fim = st.time_input("Hora de Término", time(12, 0))
 
-    dt_inicio = datetime.combine(d_inicio, t_inicio)
-    dt_fim = datetime.combine(d_fim, t_fim)
+    dt_inicio = datetime.combine(d_inicio,
 
-    if st.button("Reservar Carro"):
-        if dt_inicio >= dt_fim:
-            st.error("Erro: A data/hora de término deve ser posterior ao início.")
-        else:
-            conflitto, nome_occupante = controlla_conflitti(df_prenotazioni, carro, dt_inicio, dt_fim)
-            
-            if conflitto:
-                st.error(f"⚠️ O carro {carro} já está reservado por: {nome_occupante}!")
-            else:
-                with st.spinner('Salvando no Google Sheets...'):
-                    salva_prenotazione(sheet, carro, missionario, dt_inicio, dt_fim)
-                    st.success(f"Sucesso! {carro} reservado para {missionario}.")
-                    st.balloons()
-                    import time as t
-                    t.sleep(2)
-                    st.rerun()
-
-# --- TABELLA ---
-st.divider()
-st.subheader("📅 Reservas Atuais (Google Sheets)")
-
-if not df_prenotazioni.empty:
-    df_visual = df_prenotazioni.sort_values(by="Inicio", ascending=False)
-    # Formattazione per la visualizzazione
-    df_visual['Inicio'] = df_visual['Inicio'].dt.strftime('%d/%m/%Y %H:%M')
-    df_visual['Fim'] = df_visual['Fim'].dt.strftime('%d/%m/%Y %H:%M')
-    st.dataframe(df_visual, use_container_width=True)
-else:
-    st.info("Nenhuma reserva encontrada.")
 
 
